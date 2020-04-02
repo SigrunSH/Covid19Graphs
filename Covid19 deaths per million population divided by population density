@@ -1,0 +1,94 @@
+#Read data on Covid19
+library(tidyverse)
+deathsCovid19 <- read_csv("https://github.com/CSSEGISandData/COVID-19/raw/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_deaths_global.csv", 
+                          col_types = cols(
+                            `Province/State` = col_character(), 
+                            `Country/Region` = col_character()
+                          )) %>%
+  rename(Country = `Country/Region`, Province_State = `Province/State`) %>%
+  gather(ends_with('/20'), key = Date, value = Deaths, factor_key = FALSE) 
+
+#Change som levels/variables
+deathsCovid19$Country <-   plyr::revalue(x = deathsCovid19$Country, c(
+  'Korea, South' = 'Republic of Korea', 
+  'US' = 'USA'
+))
+
+deathsCovid19$Date <- as.Date(deathsCovid19$Date, format = "%m/%d/%y")
+
+#Make variable of deaths per country (the data contains deaths per province/state etc for some countries)
+dCV19c <- deathsCovid19 %>%
+  group_by(Country, Date) %>% 
+  mutate(deathsC = sum(Deaths)) %>%
+  ungroup() %>%
+  select(Country,Date, deathsC) %>%
+  unique(.)
+  
+ #Read data for population
+ totpop <- read_csv("data/WPP2019_TotalPopulationBySex.csv",
+                   col_types = cols(
+                     Location = col_character(),
+                     Variant = col_character()
+                   )) %>%
+  rename(Country = 'Location') %>%
+  filter(Time == 2019) %>%
+  select(Country, PopTotal, PopDensity) %>%
+  unique(.)
+  
+  #Change some country names
+  totpop$Country <-   plyr::revalue(x = totpop$Country, c(
+  'United States of America' = 'USA',
+  'Iran (Islamic Republic of)' = 'Iran'
+))
+
+#Select countries for graph
+totpopsel <- totpop %>%
+  filter(Country %in% c('China', 'Republic of Korea',  'Australia',  'USA', 'Argentina','Spain', 'Iran', 'Netherlands', 
+                        'New Zealand', 'Switzerland', 'Canada', 'Iceland','Russian Federation', 'Poland',
+                        'Italy',  'France', 'Germany', 'United Kingdom', 'Sweden', 'Denmark', 'Norway', 'Finland'))
+
+#Merge population and Covid19 data
+dsel.1 <- dCV19c %>% #covid19-data
+  inner_join(totpopsel, by = 'Country') %>% #join by pop. data
+  filter(deathsC>0) %>% #at least one death
+  mutate(deathPop = (deathsC / PopTotal)*1000) %>% #deaths per 10^6 people
+  mutate(Density = cut(PopDensity, c(0,15,  25,100, 200, 300, 400, 500, 600, 700), ordered_result = TRUE )) %>% #categoric pop. density
+  group_by(Country) %>%
+  mutate(minDate=min(Date)) %>% 
+  mutate(time = as.numeric(Date-minDate)) %>% #time of first death per country = 0
+  ungroup()
+ 
+# Graph
+
+#facet names
+facet_names = c(
+  '(0,15]' = '0-15 thousand people per square km land area',
+  '(15,25]' = '15-25 thousand per square km land area',
+  '(25,100]' = '25-100 thousand per square km land area',
+  '(100,200]' = '100-200 thousand per square km land area',
+  '(200,300]' = '200-300 thousand per square km land area',
+  '(500,600]' = '500-600 thousand per square km land area'
+)
+
+# colours
+colours <- c('forestgreen', 'green', 'darkseagreen', 'cyan',
+             'chocolate', 'yellow3', 'orange', 'brown', 
+             'steelblue', 'skyblue', 'blue', 
+             'purple', 'red', 'magenta', 'pink', 
+             'aquamarine','dodgerblue4','olivedrab', 'orchid',
+             'black', 'grey' )
+             
+ #sort countries by population density
+ dsel.1$Country <- with(dsel.1, reorder(Country, PopDensity))
+ 
+ #graph
+ ggplot(data = dsel.1, aes(x = time, y = log(deathPop), colour = Country)) +
+  geom_line(size = 2) +
+  scale_x_continuous(name = 'Number of days since the first corona related death') +
+  scale_y_continuous(name = 'Logarithm (base 10) of count of deaths pr million people') +
+  scale_color_manual(values = colours) +
+  facet_wrap(~Density, labeller = as_labeller(facet_names)) +
+  theme_bw(base_size = 20)
+  
+  # code for saving
+  ggsave(filename = 'Covid19deathsByCountryByPopulationsizeLg10commonTimeDensity.pdf', width = 25, height = 15)
